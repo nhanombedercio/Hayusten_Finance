@@ -28,12 +28,14 @@ const esquemaPassword = z.object({
   novaPassword: z.string().min(8),
 });
 
+// Rotas fixas devem estar ANTES das rotas com parâmetros — evitar que /perfil
+// seja capturado por /:id antes de chegar à rota correcta.
 router.get('/', ctrl.listar);
 router.post('/', validar(esquemaCriar), ctrl.criar);
+router.put('/perfil', validar(esquemaPerfil), ctrl.actualizarPerfil);
+router.put('/perfil/password', validar(esquemaPassword), ctrl.alterarPassword);
 router.get('/:id', ctrl.buscarPorId);
 router.put('/:id', validar(esquemaEditar), ctrl.editar);
 router.delete('/:id', ctrl.eliminar);
-router.put('/perfil', validar(esquemaPerfil), ctrl.actualizarPerfil);
-router.put('/perfil/password', validar(esquemaPassword), ctrl.alterarPassword);
 
 export default router;
