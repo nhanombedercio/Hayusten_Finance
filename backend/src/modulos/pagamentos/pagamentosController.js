@@ -13,12 +13,13 @@ export const stripeCheckout = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
-// O webhook Stripe precisa do raw body — configurado no app.js antes do express.json().
+// O webhook Stripe precisa do raw body — express.raw() em app.js armazena em req.body como Buffer.
 export const stripeWebhook = async (req, res) => {
   const assinatura = req.headers['stripe-signature'];
   let evento;
   try {
-    evento = verificarWebhook(req.rawBody, assinatura);
+    // req.body é um Buffer graças ao express.raw() configurado em app.js para esta rota.
+    evento = verificarWebhook(req.body, assinatura);
   } catch {
     return res.status(400).send('Webhook inválido.');
   }
