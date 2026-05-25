@@ -4,51 +4,68 @@ import { verificarConexaoBD } from './config/baseDados.js';
 import { verificarConexaoRedis } from './config/redis.js';
 import app from './app.js';
 import { iniciarWebhookWorker } from './modulos/pagamentos/workers/webhookWorker.js';
+import { iniciarRelatoriosWorker } from './modulos/relatorios/relatoriosWorker.js';
 import { iniciarCronJobs } from './jobs/cronJobs.js';
 import { logger } from './utils/logger.js';
-
-// Validação de ambiente antes de qualquer inicialização.
-// Se uma variável obrigatória estiver em falta, o processo termina com erro claro.
-validarAmbiente();
+import { Worker } from 'bullmq';
+import { redisFilas } from './config/redis.js';
+import { gerarInsights } from './modulos/insights/insightsServico.js';
 
 const PORTA = Number(process.env.PORT) || 3000;
 
-async function arrancar() {
-  try {
-    // Verifica conexões antes de abrir o servidor ao tráfego
-    await verificarConexaoBD();
-    logger.info('Base de dados conectada');
-
-    await verificarConexaoRedis();
-    logger.info('Redis conectado');
-
-    // Inicia worker BullMQ para processamento de webhooks Stripe
-    iniciarWebhookWorker();
-
-    // Inicia cron jobs (relatórios, avisos trial, insights)
-    iniciarCronJobs();
-
-    app.listen(PORTA, () => {
-      logger.info(`Servidor Hayusten Finance a correr na porta ${PORTA}`, {
-        ambiente: process.env.NODE_ENV,
-        porta: PORTA,
-      });
-    });
-  } catch (erro) {
-    logger.error('Falha ao arrancar o servidor', { erro: erro.message, stack: erro.stack });
-    process.exit(1);
-  }
+async function iniciarInsightsWorker() {
+  const worker = new Worker(
+    'insights',
+    async (job) => {
+      const { tenantId } = job.data;
+      await gerarInsights(tenantId);
+    },
+    { connection: redisFilas, concurrency: 5 }
+  );
+  worker.on('failed', (job, err) => logger.error('Insights worker falhado', { jobId: job?.id, erro: err.message }));
+  return worker;
 }
 
-// Graceful shutdown — fecha conexões antes de terminar o processo
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM recebido — a encerrar graciosamente');
-  process.exit(0);
-});
+async function arrancar() {
+  // Falhar cedo se o ambiente não estiver configurado correctamente.
+  validarAmbiente();
 
-process.on('uncaughtException', (erro) => {
-  logger.error('Excepção não capturada', { erro: erro.message, stack: erro.stack });
+  logger.info('A verificar conexões...');
+  await verificarConexaoBD();
+  logger.info('Base de dados OK.');
+
+  await verificarConexaoRedis();
+  logger.info('Redis OK.');
+
+  // Workers BullMQ processam jobs assíncronos — separados do processo HTTP principal.
+  iniciarWebhookWorker();
+  iniciarRelatoriosWorker();
+  await iniciarInsightsWorker();
+  logger.info('Workers BullMQ iniciados.');
+
+  iniciarCronJobs();
+
+  const servidor = app.listen(PORTA, () => {
+    logger.info(`Hayusten Finance API a correr na porta ${PORTA}`, {
+      ambiente: process.env.NODE_ENV,
+      porta: PORTA,
+    });
+  });
+
+  // Graceful shutdown — espera pelos pedidos activos antes de encerrar.
+  const terminar = (sinal) => {
+    logger.info(`Sinal ${sinal} recebido. A encerrar graciosamente...`);
+    servidor.close(() => {
+      logger.info('Servidor HTTP encerrado.');
+      process.exit(0);
+    });
+  };
+
+  process.on('SIGTERM', () => terminar('SIGTERM'));
+  process.on('SIGINT', () => terminar('SIGINT'));
+}
+
+arrancar().catch((err) => {
+  logger.error('Falha crítica no arranque', { erro: err.message, stack: err.stack });
   process.exit(1);
 });
-
-arrancar();
