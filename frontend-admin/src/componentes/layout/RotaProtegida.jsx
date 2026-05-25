@@ -5,8 +5,10 @@ import { useAdminStore } from '../../store/adminStore.js';
 export default function RotaProtegida({ children }) {
   const estaAutenticado = useAdminStore((s) => s.estaAutenticado);
   const adminToken = useAdminStore((s) => s.adminToken);
+  const adminKey = useAdminStore((s) => s.adminKey);
 
-  if (!estaAutenticado || !adminToken) {
+  // Requer tanto o JWT como a chave admin — sem ambos, redireciona para login.
+  if (!estaAutenticado || !adminToken || !adminKey) {
     return <Navigate to="/login" replace />;
   }
 

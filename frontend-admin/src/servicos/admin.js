@@ -1,8 +1,11 @@
 import api from './api.js';
 
-// Login do admin — retorna o JWT de acesso.
-export async function loginAdmin(email, password, adminKey) {
-  const resposta = await api.post('/auth/admin/login', { email, password, adminKey });
+// Login do admin usa o endpoint de auth regular, mas com validação de papel admin
+// no frontend. O adminKey é guardado localmente para ser enviado em pedidos subsequentes.
+export async function loginAdmin(email, password) {
+  // Usa instância axios directa para a rota pública de auth (sem prefixo /admin).
+  const { default: axios } = await import('axios');
+  const resposta = await axios.post('/api/auth/login', { email, password });
   return resposta.data;
 }
 

@@ -9,11 +9,12 @@ const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
-  const { adminToken } = useAdminStore.getState();
+  const { adminToken, adminKey } = useAdminStore.getState();
   if (adminToken) {
+    // O servidor exige ambos: JWT para identificar o utilizador e X-Admin-Key como
+    // segunda camada de segurança para confirmar que é o painel admin legítimo.
     config.headers['Authorization'] = `Bearer ${adminToken}`;
-    // A chave admin é guardada no token após login — o servidor valida ambos.
-    config.headers['X-Admin-Key'] = import.meta.env.VITE_ADMIN_KEY || '';
+    config.headers['X-Admin-Key'] = adminKey || '';
   }
   return config;
 });

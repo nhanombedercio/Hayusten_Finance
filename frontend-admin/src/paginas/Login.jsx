@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { ShieldCheck, Eye, EyeOff } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useAdminStore } from '../store/adminStore.js';
-import api from '../servicos/api.js';
+import { loginAdmin } from '../servicos/admin.js';
 
 const esquema = z.object({
   email: z.string().email('Email inválido'),
@@ -16,7 +16,7 @@ const esquema = z.object({
 
 export default function Login() {
   const [verPassword, setVerPassword] = useState(false);
-  const definirToken = useAdminStore((s) => s.definirToken);
+  const definirAuth = useAdminStore((s) => s.definirAuth);
   const navegar = useNavigate();
 
   const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm({
@@ -25,9 +25,10 @@ export default function Login() {
 
   async function onSubmit(dados) {
     try {
-      // Login admin requer email, password e a chave secreta de admin.
-      const resposta = await api.post('/auth/admin/login', dados);
-      definirToken(resposta.data.dados.accessToken);
+      // O JWT vem do endpoint de auth regular; a adminKey é guardada localmente
+      // para ser enviada como X-Admin-Key em todos os pedidos ao painel admin.
+      const resposta = await loginAdmin(dados.email, dados.password);
+      definirAuth(resposta.dados.accessToken, dados.adminKey);
       navegar('/metricas');
     } catch (erro) {
       const mensagem = erro.response?.data?.mensagem || 'Credenciais inválidas.';
