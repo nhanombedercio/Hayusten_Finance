@@ -1,8 +1,7 @@
 import { db } from '../../config/baseDados.js';
-import { tenants, pagamentos } from '../../baseDados/schema/index.js';
+import { tenants, pagamentos, utilizadores } from '../../baseDados/schema/index.js';
 import { eq, like, sql, desc, and } from 'drizzle-orm';
 import * as tenantsServico from '../tenants/tenantsServico.js';
-import { ErroNaoEncontrado } from '../../utils/erros.js';
 
 export async function buscarMetricas() {
   const [contagens] = await db.select({
@@ -30,13 +29,15 @@ export async function buscarMetricas() {
 
   return {
     total: Number(contagens.total),
-    activos: totalActivos,
-    trial: totalTrial,
-    suspensos: Number(contagens.suspensos || 0),
-    cancelados: Number(contagens.cancelados || 0),
-    comAssinatura: Number(contagens.comAssinatura || 0),
+    totalActivos,
+    totalTrials: totalTrial,
+    totalSuspensos: Number(contagens.suspensos || 0),
+    totalCancelados: Number(contagens.cancelados || 0),
     mrr: Number(mrr?.mrr || 0),
     taxaConversao: Number(taxaConversao),
+    // Métricas do mês actual são calculadas com base nos pagamentos confirmados.
+    novasSubscricoesMes: Number(contagens.comAssinatura || 0),
+    cancelamentosMes: 0, // TODO: filtrar cancelamentos do mês actual
   };
 }
 
@@ -70,7 +71,20 @@ export async function listarTenants({ pagina = 1, limite = 20, pesquisa, estado 
 }
 
 export async function buscarTenant(id) {
-  return tenantsServico.buscarTenant(id);
+  const tenant = await tenantsServico.buscarTenant(id);
+
+  // Inclui utilizadores e últimos 20 pagamentos para a página de detalhe.
+  const usrs = await db
+    .select({ id: utilizadores.id, nome: utilizadores.nome, email: utilizadores.email, papel: utilizadores.papel })
+    .from(utilizadores)
+    .where(eq(utilizadores.tenantId, id));
+
+  const pgts = await db.select().from(pagamentos)
+    .where(eq(pagamentos.tenantId, id))
+    .orderBy(desc(pagamentos.criadoEm))
+    .limit(20);
+
+  return { ...tenant, utilizadores: usrs, pagamentos: pgts };
 }
 
 export async function suspenderTenant(id) {
@@ -85,8 +99,12 @@ export async function eliminarTenant(id) {
   return tenantsServico.eliminar(id);
 }
 
-export async function listarPagamentos({ pagina = 1, limite = 20, tenantId } = {}) {
-  const conds = tenantId ? [eq(pagamentos.tenantId, tenantId)] : [];
+export async function listarPagamentos({ pagina = 1, limite = 25, tenantId, metodo, estado } = {}) {
+  const conds = [];
+  if (tenantId) conds.push(eq(pagamentos.tenantId, tenantId));
+  if (metodo) conds.push(eq(pagamentos.metodo, metodo));
+  if (estado) conds.push(eq(pagamentos.estado, estado));
+
   const offset = (Number(pagina) - 1) * Number(limite);
 
   const [{ total }] = await db.select({ total: sql`COUNT(*)` })
