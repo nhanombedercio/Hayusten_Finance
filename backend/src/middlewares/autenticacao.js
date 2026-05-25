@@ -41,6 +41,7 @@ export async function autenticacao(req, res, next) {
     return erro(res, mensagens[tenant.estado] || 'Acesso negado.', 403);
   }
 
-  req.usuario = { id: payload.sub, tenantId: payload.tenantId, papel: payload.papel };
+  // O JWT é assinado com `id` — não `sub` — em authServico.js.
+  req.usuario = { id: payload.id, tenantId: payload.tenantId, papel: payload.papel };
   next();
 }
