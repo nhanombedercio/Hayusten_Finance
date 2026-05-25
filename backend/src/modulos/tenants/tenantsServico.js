@@ -35,6 +35,19 @@ export async function buscarTenant(tenantId) {
   return tenant;
 }
 
+export async function actualizarTenant(tenantId, dados) {
+  await buscarTenant(tenantId);
+
+  const campos = {};
+  if (dados.nome !== undefined) campos.nome = dados.nome;
+  if (dados.moedaPrincipal !== undefined) campos.moedaPrincipal = dados.moedaPrincipal;
+  if (dados.relatoriosEmailActivo !== undefined) campos.relatoriosEmailActivo = dados.relatoriosEmailActivo;
+  campos.actualizadoEm = new Date();
+
+  await db.update(tenants).set(campos).where(eq(tenants.id, tenantId));
+  return buscarTenant(tenantId);
+}
+
 export async function activar(tenantId) {
   const tenant = await buscarTenant(tenantId);
   if (tenant.estado === 'activo') return tenant;
