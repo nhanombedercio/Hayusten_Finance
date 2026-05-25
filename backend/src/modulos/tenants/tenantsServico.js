@@ -5,6 +5,29 @@ import { ErroNaoEncontrado, ErroNegocio } from '../../utils/erros.js';
 import { emTransacao } from '../../utils/transacao.js';
 import { enviarContaSuspensa, enviarAssinaturaCancelada } from '../../utils/email.js';
 import { logger } from '../../utils/logger.js';
+import { redisSessoes } from '../../config/redis.js';
+
+// Revoga todas as sessões activas do tenant — chamada obrigatória na suspensão
+// para garantir que o utilizador não consegue continuar com sessões abertas.
+async function revogarTodasSessoesTenant(tenantId) {
+  const chaves = await redisSessoes.keys(`refresh:*`);
+  // Filtramos os tokens que pertencem ao tenant através do valor armazenado.
+  const pipeline = redisSessoes.pipeline();
+  for (const chave of chaves) {
+    pipeline.get(chave);
+  }
+  const valores = await pipeline.exec();
+  const chavesDoTenant = chaves.filter((_, i) => {
+    try {
+      const dados = JSON.parse(valores[i][1]);
+      return dados.tenantId === tenantId;
+    } catch { return false; }
+  });
+  if (chavesDoTenant.length > 0) {
+    await redisSessoes.del(...chavesDoTenant);
+  }
+  logger.info('Sessões revogadas', { tenantId, total: chavesDoTenant.length });
+}
 
 export async function buscarTenant(tenantId) {
   const [tenant] = await db.select().from(tenants).where(eq(tenants.id, tenantId)).limit(1);
@@ -31,6 +54,8 @@ export async function suspender(tenantId) {
     .set({ estado: 'suspenso', assinaturaActiva: false, actualizadoEm: new Date() })
     .where(eq(tenants.id, tenantId));
 
+  // Revoga sessões imediatamente — o utilizador é desligado em qualquer dispositivo activo.
+  await revogarTodasSessoesTenant(tenantId);
   await enviarContaSuspensa(tenant.email, tenant.nome);
   logger.info('Tenant suspenso', { tenantId });
 }
@@ -63,18 +88,28 @@ export async function cancelar(tenantId, dataFimAcesso) {
   logger.info('Tenant cancelado', { tenantId });
 }
 
-// Eliminação RGPD — apaga todos os dados pessoais do tenant.
-// Usa CASCADE na BD mas é explícito aqui para auditoria.
+// Eliminação RGPD — anonimiza os dados pessoais em vez de apagar o registo.
+// Os registos financeiros são mantidos para integridade referencial e auditoria.
+// Email e nome são substituídos por valores anónimos não identificáveis.
 export async function eliminar(tenantId) {
-  await buscarTenant(tenantId);
+  const tenant = await buscarTenant(tenantId);
+  const ts = Date.now();
+  const emailAnonimo = `anonimizado_eliminado_${ts}@hayusten.invalid`;
+  const nomeAnonimo = 'Conta eliminada';
 
   await emTransacao(async (tx) => {
-    await tx.delete(transacoes).where(eq(transacoes.tenantId, tenantId));
-    await tx.delete(categorias).where(eq(categorias.tenantId, tenantId));
-    await tx.delete(contasFinanceiras).where(eq(contasFinanceiras.tenantId, tenantId));
-    await tx.delete(utilizadores).where(eq(utilizadores.tenantId, tenantId));
-    await tx.delete(tenants).where(eq(tenants.id, tenantId));
+    // Anonimiza o tenant — mantém o registo para referência em pagamentos históricos.
+    await tx.update(tenants)
+      .set({ email: emailAnonimo, nome: nomeAnonimo, estado: 'cancelado', assinaturaActiva: false })
+      .where(eq(tenants.id, tenantId));
+
+    // Anonimiza todos os utilizadores do tenant.
+    await tx.update(utilizadores)
+      .set({ email: emailAnonimo, nome: nomeAnonimo, passwordHash: 'ELIMINADO', activo: false })
+      .where(eq(utilizadores.tenantId, tenantId));
   });
 
-  logger.info('Tenant eliminado (RGPD)', { tenantId });
+  // Invalida todas as sessões activas após a anonimização.
+  await revogarTodasSessoesTenant(tenantId);
+  logger.info('Tenant anonimizado (RGPD)', { tenantId, emailOriginal: tenant.email });
 }
